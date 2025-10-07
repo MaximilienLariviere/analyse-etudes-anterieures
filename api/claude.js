@@ -26,28 +26,54 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'API key is required' });
     }
 
-    // Appel à l'API Anthropic
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens,
-        messages
-      })
-    });
+    // Configuration du timeout et headers pour streaming
+    res.setHeader('Content-Type', 'application/json');
+    
+    // Créer un timeout plus long côté client
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 280000); // 280 secondes (un peu moins que la limite Vercel)
 
-    const data = await response.json();
+    try {
+      // Appel à l'API Anthropic
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens,
+          messages
+        }),
+        signal: controller.signal
+      });
 
-    if (!response.ok) {
-      return res.status(response.status).json(data);
+      clearTimeout(timeoutId);
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return res.status(response.status).json(data);
+      }
+
+      return res.status(200).json(data);
+
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      
+      if (fetchError.name === 'AbortError') {
+        return res.status(408).json({ 
+          error: {
+            type: 'timeout_error',
+            message: 'La requête a pris trop de temps. Essayez avec un document plus petit ou contactez le support.'
+          }
+        });
+      }
+      
+      throw fetchError;
     }
-
-    return res.status(200).json(data);
 
   } catch (error) {
     console.error('Erreur serveur:', error);
