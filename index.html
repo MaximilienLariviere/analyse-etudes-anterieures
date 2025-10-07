@@ -229,13 +229,31 @@
             height: 100%;
             background: linear-gradient(90deg, #649183 0%, #123924 100%);
             width: 0%;
-            transition: width 0.5s;
+            transition: width 0.5s ease-out;
             display: flex;
             align-items: center;
             justify-content: center;
             color: white;
             font-weight: 700;
             font-size: 0.95em;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .progress-bar::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            animation: shimmer 2s infinite;
+        }
+
+        @keyframes shimmer {
+            0% { left: -100%; }
+            100% { left: 100%; }
         }
 
         .progress-status {
@@ -244,6 +262,31 @@
             font-size: 1.05em;
             margin-top: 12px;
             font-weight: 500;
+            min-height: 60px;
+        }
+
+        .progress-details {
+            font-size: 0.9em;
+            color: #6c757d;
+            margin-top: 8px;
+            font-style: italic;
+        }
+
+        .progress-spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 3px solid #649183;
+            border-top: 3px solid transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
 
         .results-section {
@@ -457,6 +500,7 @@
         let opusAnalysis = '';
         let finalSynthesis = '';
         let conversationHistory = [];
+        let progressInterval = null;
 
         // Éléments DOM
         const apiKeyInput = document.getElementById('apiKey');
@@ -573,7 +617,9 @@
                 }
 
                 // === ANALYSE 1 : SONNET 4.5 ===
-                updateProgress(20, '🔵 ANALYSE 1/3 - Claude Sonnet 4.5 (extraction rapide et complète)...');
+                updateProgress(20, '🔵 ANALYSE 1/3 - Claude Sonnet 4.5', 'Extraction rapide et complète en cours...');
+                startProgressAnimation(20, 40, 3000, '🔵 ANALYSE 1/3 - Claude Sonnet 4.5', 'Analyse en cours - Cela peut prendre plusieurs minutes pour les gros documents');
+                
                 const promptSonnet = buildAnalysisPrompt('sonnet');
                 
                 const responseSonnet = await fetch('/api/claude', {
@@ -593,33 +639,43 @@
                 });
 
                 if (!responseSonnet.ok) {
-                    const error = await responseSonnet.json();
-                    throw new Error(`Erreur Sonnet (${responseSonnet.status}): ${error.error?.message || JSON.stringify(error)}`);
+                    let errorMessage = `Erreur HTTP ${responseSonnet.status}`;
+                    try {
+                        const error = await responseSonnet.json();
+                        errorMessage = error.error?.message || JSON.stringify(error);
+                    } catch (e) {
+                        const errorText = await responseSonnet.text();
+                        errorMessage = errorText.substring(0, 200);
+                    }
+                    throw new Error(`Erreur Sonnet (${responseSonnet.status}): ${errorMessage}`);
                 }
 
                 const dataSonnet = await responseSonnet.json();
                 sonnetAnalysis = dataSonnet.content[0].text;
 
-                updateProgress(45, '✅ Sonnet terminé. Attente de 60 secondes avant Opus (gestion des limites API)...');
+                if (progressInterval) clearInterval(progressInterval);
+                updateProgress(45, '✅ Sonnet terminé. Attente avant Opus...', 'Gestion des limites API - 60 secondes');
                 
-                // Attendre 60 secondes pour réinitialiser les limites de tokens/minute
+                // Attendre 60 secondes avec progression visuelle
                 for (let i = 60; i > 0; i--) {
-                    updateProgress(45, `⏱️ Attente ${i}s avant Opus 4.1 (gestion des limites API)...`);
+                    const waitPercent = 45 + ((60 - i) / 60) * 5; // 45% à 50%
+                    updateProgress(waitPercent, `⏱️ Attente ${i}s avant Opus 4.1`, 'Gestion des limites API pour éviter les erreurs');
                     await new Promise(resolve => setTimeout(resolve, 1000));
                 }
 
                 // === ANALYSE 2 : OPUS 4.1 ===
-                updateProgress(50, '🟣 ANALYSE 2/3 - Claude Opus 4.1 (validation approfondie)...');
+                updateProgress(50, '🟣 ANALYSE 2/3 - Claude Opus 4.1', 'Validation approfondie en cours...');
+                startProgressAnimation(50, 70, 3000, '🟣 ANALYSE 2/3 - Claude Opus 4.1', 'Analyse approfondie - Patience, c\'est le modèle le plus puissant');
+                
                 const promptOpus = buildAnalysisPrompt('opus');
                 
-                const responseOpus = await fetch('https://api.anthropic.com/v1/messages', {
+                const responseOpus = await fetch('/api/claude', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'x-api-key': apiKeyInput.value,
-                        'anthropic-version': '2023-06-01'
                     },
                     body: JSON.stringify({
+                        apiKey: apiKeyInput.value,
                         model: 'claude-opus-4-20250514',
                         max_tokens: 32000,
                         messages: [{
@@ -630,23 +686,33 @@
                 });
 
                 if (!responseOpus.ok) {
-                    const error = await responseOpus.json();
-                    throw new Error(`Erreur Opus: ${error.error?.message || 'Erreur API'}`);
+                    let errorMessage = `Erreur HTTP ${responseOpus.status}`;
+                    try {
+                        const error = await responseOpus.json();
+                        errorMessage = error.error?.message || JSON.stringify(error);
+                    } catch (e) {
+                        const errorText = await responseOpus.text();
+                        errorMessage = errorText.substring(0, 200);
+                    }
+                    throw new Error(`Erreur Opus (${responseOpus.status}): ${errorMessage}`);
                 }
 
                 const dataOpus = await responseOpus.json();
                 opusAnalysis = dataOpus.content[0].text;
 
-                updateProgress(75, '✅ Opus terminé. Attente de 60 secondes avant synthèse finale (gestion des limites API)...');
+                if (progressInterval) clearInterval(progressInterval);
+                updateProgress(75, '✅ Opus terminé. Attente avant synthèse finale...', 'Gestion des limites API - 60 secondes');
                 
-                // Attendre 60 secondes pour réinitialiser les limites de tokens/minute avant le 2e appel Opus
+                // Attendre 60 secondes avec progression visuelle
                 for (let i = 60; i > 0; i--) {
-                    updateProgress(75, `⏱️ Attente ${i}s avant synthèse finale (gestion des limites API)...`);
+                    const waitPercent = 75 + ((60 - i) / 60) * 5; // 75% à 80%
+                    updateProgress(waitPercent, `⏱️ Attente ${i}s avant synthèse finale`, 'Dernière étape après cette pause');
                     await new Promise(resolve => setTimeout(resolve, 1000));
                 }
 
                 // === SYNTHÈSE FINALE ===
-                updateProgress(80, '🎯 ANALYSE 3/3 - Synthèse finale (comparaison et optimisation)...');
+                updateProgress(80, '🎯 ANALYSE 3/3 - Synthèse finale', 'Comparaison et optimisation des deux analyses...');
+                startProgressAnimation(80, 95, 3000, '🎯 ANALYSE 3/3 - Synthèse finale', 'Création du rapport final optimisé');
                 
                 const synthesisPrompt = `Tu es un expert en évaluation environnementale. Tu as devant toi DEUX analyses complètes du même ensemble de documents, réalisées par deux systèmes différents.
 
@@ -683,14 +749,13 @@ ${opusAnalysis}
 
 **RÈGLE ABSOLUE :** Ne JAMAIS perdre d'information critique. En cas de doute, inclure les deux versions avec explication.`;
 
-                const responseSynthesis = await fetch('https://api.anthropic.com/v1/messages', {
+                const responseSynthesis = await fetch('/api/claude', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'x-api-key': apiKeyInput.value,
-                        'anthropic-version': '2023-06-01'
                     },
                     body: JSON.stringify({
+                        apiKey: apiKeyInput.value,
                         model: 'claude-opus-4-20250514',
                         max_tokens: 32000,
                         messages: [{
@@ -701,14 +766,22 @@ ${opusAnalysis}
                 });
 
                 if (!responseSynthesis.ok) {
-                    const error = await responseSynthesis.json();
-                    throw new Error(`Erreur synthèse: ${error.error?.message || 'Erreur API'}`);
+                    let errorMessage = `Erreur HTTP ${responseSynthesis.status}`;
+                    try {
+                        const error = await responseSynthesis.json();
+                        errorMessage = error.error?.message || JSON.stringify(error);
+                    } catch (e) {
+                        const errorText = await responseSynthesis.text();
+                        errorMessage = errorText.substring(0, 200);
+                    }
+                    throw new Error(`Erreur synthèse (${responseSynthesis.status}): ${errorMessage}`);
                 }
 
                 const dataSynthesis = await responseSynthesis.json();
                 finalSynthesis = dataSynthesis.content[0].text;
 
-                updateProgress(100, '✅ Analyse experte terminée !');
+                if (progressInterval) clearInterval(progressInterval);
+                updateProgress(100, '✅ Analyse experte terminée !', 'Votre rapport est prêt');
 
                 setTimeout(() => {
                     progressSection.classList.remove('active');
@@ -717,6 +790,7 @@ ${opusAnalysis}
                 }, 500);
 
             } catch (error) {
+                if (progressInterval) clearInterval(progressInterval);
                 updateProgress(0, `❌ Erreur: ${error.message}`);
                 console.error('Erreur détaillée:', error);
                 alert(`Erreur détectée: ${error.message}\n\nVérifiez:\n1. Votre clé API Anthropic est valide\n2. Vous avez des crédits sur votre compte Anthropic\n3. La console du navigateur (F12) pour plus de détails`);
@@ -848,10 +922,35 @@ Ensuite, fournis un AVIS PROFESSIONNEL INTERNE avec:
             return systemPrompt + '\n\n' + documentsContent;
         }
 
-        function updateProgress(percent, status) {
+        function updateProgress(percent, status, details = '') {
             progressBar.style.width = percent + '%';
             progressBar.textContent = Math.round(percent) + '%';
-            progressStatus.textContent = status;
+            
+            let statusHTML = status;
+            if (percent > 0 && percent < 100) {
+                statusHTML = `<span class="progress-spinner"></span>${status}`;
+            }
+            progressStatus.innerHTML = statusHTML;
+            
+            if (details) {
+                progressStatus.innerHTML += `<div class="progress-details">${details}</div>`;
+            }
+        }
+
+        function startProgressAnimation(startPercent, endPercent, duration, statusText, detailsText = '') {
+            if (progressInterval) clearInterval(progressInterval);
+            
+            let currentPercent = startPercent;
+            const increment = (endPercent - startPercent) / (duration / 100);
+            
+            progressInterval = setInterval(() => {
+                currentPercent += increment;
+                if (currentPercent >= endPercent) {
+                    currentPercent = endPercent;
+                    clearInterval(progressInterval);
+                }
+                updateProgress(currentPercent, statusText, detailsText);
+            }, 100);
         }
 
         // Chat
@@ -893,14 +992,13 @@ L'utilisateur pose maintenant une question. Réponds en te basant sur les docume
                     ...conversationHistory
                 ];
 
-                const response = await fetch('https://api.anthropic.com/v1/messages', {
+                const response = await fetch('/api/claude', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'x-api-key': apiKeyInput.value,
-                        'anthropic-version': '2023-06-01'
                     },
                     body: JSON.stringify({
+                        apiKey: apiKeyInput.value,
                         model: 'claude-opus-4-20250514',
                         max_tokens: 4096,
                         messages: messages
