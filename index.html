@@ -595,7 +595,7 @@
 
                 if (!responseSonnet.ok) {
                     const error = await responseSonnet.json();
-                    throw new Error(`Erreur Sonnet: ${error.error?.message || 'Erreur API'}`);
+                    throw new Error(`Erreur Sonnet (${responseSonnet.status}): ${error.error?.message || JSON.stringify(error)}`);
                 }
 
                 const dataSonnet = await responseSonnet.json();
@@ -719,7 +719,8 @@ ${opusAnalysis}
 
             } catch (error) {
                 updateProgress(0, `❌ Erreur: ${error.message}`);
-                console.error(error);
+                console.error('Erreur détaillée:', error);
+                alert(`Erreur détectée: ${error.message}\n\nVérifiez:\n1. Votre clé API Anthropic est valide\n2. Vous avez des crédits sur votre compte Anthropic\n3. La console du navigateur (F12) pour plus de détails`);
             }
         });
 
